@@ -1,0 +1,198 @@
+import os
+import subprocess
+import speech_recognition as sr
+import time
+import psutil
+import pyttsx3
+from datetime import datetime
+
+//VOICE SYSTEM (OFFLINE, FEMALE - ZIRA)
+engine = pyttsx3.init()
+
+def set_zira_voice():
+    voices = engine.getProperty("voices")
+    for voice in voices:
+        if "zira" in voice.name.lower():
+            engine.setProperty("voice", voice.id)
+            return
+    print("[WARN] Zira voice not found. Using default voice.")
+
+set_zira_voice()
+engine.setProperty("rate", 175)
+
+def speak(text):
+    print(f"ENID: {text}")
+    engine.say(text)
+    engine.runAndWait()
+
+def acknowledge(action="Working"):
+    speak(f"{action}, sir.")
+
+//LISTENING SYSTEM (FAST, RESPONSIVE)
+
+def listen():
+    recognizer = sr.Recognizer()
+    recognizer.energy_threshold = 300
+    recognizer.pause_threshold = 0.6
+
+    with sr.Microphone() as source:
+        print("Listening...")
+        audio = recognizer.listen(source, timeout=5, phrase_time_limit=4)
+
+    try:
+        command = recognizer.recognize_google(audio)
+        print(f"You: {command}")
+        return command.lower()
+    except:
+        return ""
+//PATH DEFINITIONS
+
+
+USER_HOME = os.path.expanduser("~")
+
+BASE_FOLDERS = {
+    "documents": os.path.join(USER_HOME, "Documents"),
+    "pictures": os.path.join(USER_HOME, "Pictures"),
+    "downloads": os.path.join(USER_HOME, "Downloads"),
+    "desktop": os.path.join(USER_HOME, "Desktop"),
+    "screenshots": os.path.join(USER_HOME, "Pictures", "Screenshots"),
+}
+
+ALIASES = {
+    "mechx club": os.path.join(USER_HOME, "Documents", "MechX Club"),
+    "project files": os.path.join(USER_HOME, "Documents", "Projects"),
+}
+
+APPS = {
+    "brave": r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+    "spotify": r"C:\Users\%USERNAME%\AppData\Roaming\Spotify\Spotify.exe",
+}
+
+//EXPLORER & FILE HANDLING
+
+
+def open_explorer(path=None):
+    if path and os.path.exists(path):
+        subprocess.Popen(f'explorer "{path}"')
+        speak("Done, sir.")
+    else:
+        subprocess.Popen("explorer")
+        speak("File Explorer opened, sir.")
+
+def find_folder_globally(folder_name):
+    folder_name = folder_name.lower()
+    for root, dirs, _ in os.walk("C:\\"):
+        for d in dirs:
+            if folder_name in d.lower():
+                return os.path.join(root, d)
+    return None
+
+def find_subfolder(parent_path, child_name):
+    child_name = child_name.lower()
+    for root, dirs, _ in os.walk(parent_path):
+        for d in dirs:
+            if child_name in d.lower():
+                return os.path.join(root, d)
+    return None
+
+//APPLICATION HANDLING
+
+def open_app(app_name):
+    acknowledge(f"Opening {app_name}")
+    path = APPS.get(app_name)
+    if path:
+        subprocess.Popen(os.path.expandvars(path))
+        speak(f"{app_name.capitalize()} opened, sir.")
+    else:
+        speak("I don't know how to open that application yet, sir.")
+
+//SYSTEM DIAGNOSTICS
+
+def system_status():
+    acknowledge("Running diagnostics")
+    cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory().percent
+    speak(f"CPU usage is {cpu} percent. RAM usage is {ram} percent, sir.")
+
+//COMMAND ROUTER (INTENT-BASED)
+
+def handle_command(command):
+    if not command:
+        return
+
+    # --- APP OPENING ---
+    for app in APPS:
+        if "open" in command and app in command:
+            open_app(app)
+            return
+
+    # --- BASE FOLDERS ---
+    for folder_name, folder_path in BASE_FOLDERS.items():
+        if "open" in command and folder_name in command:
+            acknowledge(f"Opening {folder_name}")
+            open_explorer(folder_path)
+            return
+
+    # --- ALIASES ---
+    for alias, path in ALIASES.items():
+        if alias in command:
+            acknowledge(f"Opening {alias}")
+            open_explorer(path)
+            return
+
+    # --- NESTED FOLDERS ---
+    if "inside" in command and "open" in command:
+        acknowledge("Searching folders")
+        parts = command.replace("open", "").split("inside")
+        child = parts[0].strip()
+        parent = parts[1].strip()
+
+        if parent in BASE_FOLDERS:
+            found = find_subfolder(BASE_FOLDERS[parent], child)
+            if found:
+                open_explorer(found)
+            else:
+                speak("Folder not found inside that directory, sir.")
+            return
+
+    # --- GENERIC FOLDER SEARCH ---
+    if "open" in command and "folder" in command:
+        acknowledge("Searching system")
+        name = command.replace("open", "").replace("folder", "").strip()
+        found = find_folder_globally(name)
+        if found:
+            open_explorer(found)
+        else:
+            speak("I couldn't locate that folder, sir.")
+        return
+
+    # --- EXPLORER ---
+    if "explorer" in command or "file" in command:
+        acknowledge("Opening file explorer")
+        open_explorer()
+        return
+
+    # --- SYSTEM ---
+    if "status" in command or "diagnosis" in command:
+        system_status()
+        return
+
+    # --- EXIT ---
+    if "sleep" in command or "exit" in command:
+        speak("Going offline. Goodbye, sir.")
+        exit()
+
+    # --- FALLBACK ---
+    speak("Command not recognized, sir. Please try again.")
+
+//MAIN LOOP
+
+speak("Systems online. ENID active.")
+
+while True:
+    try:
+        cmd = listen()
+        handle_command(cmd)
+        time.sleep(0.2)
+    except Exception as e:
+        print("[ERROR]", e)
