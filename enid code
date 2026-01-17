@@ -1,0 +1,224 @@
+import speech_recognition as sr
+import pyttsx3
+import os
+import subprocess
+import webbrowser
+import time
+import queue
+import threading
+import sys
+
+# ================== CONFIG ==================
+
+ASSISTANT_NAME = "enid"
+SILENCE_TIMEOUT = 60
+
+BRAVE_PATH = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+
+COMMON_FOLDERS = {
+    "documents": os.path.expanduser("~/Documents"),
+    "downloads": os.path.expanduser("~/Downloads"),
+    "desktop": os.path.expanduser("~/Desktop"),
+    "pictures": os.path.expanduser("~/Pictures"),
+    "screenshots": os.path.expanduser("~/Pictures/Screenshots"),
+    "music": os.path.expanduser("~/Music"),
+    "videos": os.path.expanduser("~/Videos"),
+}
+
+CUSTOM_FOLDERS = {
+    "mech x club": r"C:\Users\vrgbr\OneDrive\Desktop\MechX Club",
+    "college resources": r"C:\Users\vrgbr\OneDrive\Desktop\websites\college resources",
+}
+
+APPS = {
+    "brave": BRAVE_PATH,
+    "spotify": "spotify",
+    "file explorer": "explorer",
+    "explorer": "explorer",
+    "instagram": "https://www.instagram.com",
+    "youtube": "https://www.youtube.com",
+    "whatsapp": "https://web.whatsapp.com",
+}
+
+# ================== TTS THREAD ==================
+
+tts_queue = queue.Queue()
+tts_engine = pyttsx3.init()
+tts_engine.setProperty("rate", 170)
+
+for v in tts_engine.getProperty("voices"):
+    if "zira" in v.name.lower():
+        tts_engine.setProperty("voice", v.id)
+        break
+
+def tts_worker():
+    while True:
+        text = tts_queue.get()
+        if text is None:
+            break
+        tts_engine.say(text)
+        tts_engine.runAndWait()
+        tts_queue.task_done()
+
+tts_thread = threading.Thread(target=tts_worker, daemon=True)
+tts_thread.start()
+
+def speak(text):
+    print(f"ENID: {text}")
+    tts_queue.put(text)
+
+def shutdown_voice():
+    tts_queue.join()
+    tts_queue.put(None)
+    tts_thread.join()
+
+# ================== SPEECH INPUT ==================
+
+recognizer = sr.Recognizer()
+mic = sr.Microphone()
+
+def listen():
+    with mic as source:
+        recognizer.adjust_for_ambient_noise(source, duration=0.3)
+        audio = recognizer.listen(source, phrase_time_limit=6)
+    try:
+        return recognizer.recognize_google(audio).lower()
+    except:
+        return ""
+
+# ================== ACTIONS ==================
+
+def open_app(target):
+    try:
+        if target == "spotify":
+            speak("Opening Spotify, sir.")
+            subprocess.Popen(
+                "start spotify:",
+                shell=True
+            )
+            speak("Spotify opened, sir.")
+            return True
+
+        if target in APPS:
+            val = APPS[target]
+            speak(f"Opening {target}, sir.")
+
+            if val.startswith("http"):
+                webbrowser.open(val)
+            elif val == "explorer":
+                subprocess.Popen("explorer", shell=True)
+            else:
+                subprocess.Popen(val, shell=True)
+
+            speak(f"{target} opened, sir.")
+            return True
+
+    except Exception as e:
+        speak(f"Failed to open {target}, sir.")
+        print(e)
+
+    return False
+
+def open_folder(folder):
+    try:
+        if folder in COMMON_FOLDERS:
+            path = COMMON_FOLDERS[folder]
+
+            if not os.path.exists(path):
+                speak("Folder path does not exist, sir.")
+                return False
+
+            speak(f"Opening {folder}, sir.")
+            os.startfile(path)
+            speak(f"{folder} opened, sir.")
+            return True
+
+        if folder in CUSTOM_FOLDERS:
+            path = CUSTOM_FOLDERS[folder]
+
+            if not os.path.exists(path):
+                speak("Folder path does not exist, sir.")
+                return False
+
+            speak(f"Opening {folder}, sir.")
+            os.startfile(path)
+            speak(f"{folder} opened, sir.")
+            return True
+
+    except Exception as e:
+        speak("Unable to open folder, sir.")
+        print(e)
+
+    return False
+
+def web_search(query):
+    speak("Searching the web, sir.")
+    webbrowser.open(
+        f"https://search.brave.com/search?q={query.replace(' ', '+')}"
+    )
+    speak("Search results opened, sir.")
+
+def play_song(song):
+    try:
+        speak(f"Playing {song}, sir.")
+        subprocess.Popen(
+            f'start spotify:search:{song.replace(" ", "%20")}',
+            shell=True
+        )
+        speak(f"{song} is now playing, sir.")
+    except Exception as e:
+        speak(f"Failed to play {song}, sir.")
+        print(e)
+
+# ================== COMMAND PARSER ==================
+
+def handle_command(command):
+    print(f"You: {command}")
+
+    if command.startswith("open "):
+        target = command.replace("open ", "").strip()
+        if open_app(target):
+            return
+        if open_folder(target):
+            return
+        speak("Command not recognized, sir.")
+        return
+
+    if command.startswith("play "):
+        play_song(command.replace("play ", ""))
+        return
+
+    if command.startswith("search ") or command.startswith("who is") or command.startswith("what is"):
+        web_search(command)
+        return
+
+    if "sleep" in command or "shutdown" in command:
+        speak("Shutting down, sir.")
+        shutdown_voice()
+        sys.exit(0)
+
+    speak("Command not recognized, sir.")
+
+# ================== MAIN LOOP ==================
+
+def enid_loop():
+    speak("Systems online. ENID active.")
+    last_active = time.time()
+
+    while True:
+        if time.time() - last_active > SILENCE_TIMEOUT:
+            speak("No input detected. Shutting down, sir.")
+            shutdown_voice()
+            break
+
+        cmd = listen()
+        if cmd:
+            last_active = time.time()
+            handle_command(cmd)
+
+    sys.exit(0)
+
+# ================== ENTRY ==================
+
+if __name__ == "__main__":
+    enid_loop()
