@@ -1,0 +1,236 @@
+import speech_recognition as sr
+import pyttsx3
+import os
+import subprocess
+import webbrowser
+import datetime
+import queue
+import threading
+import time
+import sys
+from openai import OpenAI
+from config import apikey
+
+# ================= CONFIG =================
+
+ASSISTANT_NAME = "enid"
+WAKE_WORD = "hey enid"
+MAX_CHAT_TURNS = 8
+SILENCE_TIMEOUT = 90
+
+client = OpenAI(api_key=apikey)
+chat_history = []
+
+# ---------- Paths ----------
+
+HOME = os.path.expanduser("~")
+
+COMMON_FOLDERS = {
+    "documents": os.path.join(HOME, "Documents"),
+    "downloads": os.path.join(HOME, "Downloads"),
+    "desktop": os.path.join(HOME, "Desktop"),
+    "pictures": os.path.join(HOME, "Pictures"),
+    "screenshots": os.path.join(HOME, "Pictures", "Screenshots"),
+    "music": os.path.join(HOME, "Music"),
+    "videos": os.path.join(HOME, "Videos"),
+}
+
+APPS = {
+    "spotify": "start spotify:",
+    "notepad": "notepad.exe",
+    "explorer": "explorer",
+    "youtube": "https://www.youtube.com",
+    "google": "https://www.google.com",
+    "whatsapp": "https://web.whatsapp.com",
+}
+
+# ================= NON-BLOCKING TTS =================
+
+tts_queue = queue.Queue()
+engine = pyttsx3.init()
+engine.setProperty("rate", 170)
+
+def tts_worker():
+    while True:
+        text = tts_queue.get()
+        if text is None:
+            break
+        engine.say(text)
+        engine.runAndWait()
+        tts_queue.task_done()
+
+threading.Thread(target=tts_worker, daemon=True).start()
+
+def speak(text):
+    print(f"ENID: {text}")
+    tts_queue.put(text)
+
+def shutdown_tts():
+    tts_queue.join()
+    tts_queue.put(None)
+
+# ================= SPEECH INPUT =================
+
+recognizer = sr.Recognizer()
+mic = sr.Microphone()
+
+def listen():
+    with mic as source:
+        recognizer.adjust_for_ambient_noise(source, duration=0.3)
+        audio = recognizer.listen(source, phrase_time_limit=6)
+    try:
+        return recognizer.recognize_google(audio, language="en-in").lower()
+    except:
+        return None
+
+# ================= AI CHAT =================
+
+def chat(query):
+    global chat_history
+
+    chat_history.append({"role": "user", "content": query})
+    chat_history = chat_history[-MAX_CHAT_TURNS * 2:]
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are ENID, a calm, precise, intelligent AI assistant."
+            },
+            *chat_history
+        ],
+        temperature=0.6,
+        max_tokens=250
+    )
+
+    reply = response.choices[0].message.content.strip()
+    chat_history.append({"role": "assistant", "content": reply})
+    speak(reply)
+
+# ================= ACTIONS =================
+
+def open_app(name):
+    speak(f"Opening {name}")
+    val = APPS[name]
+
+    if val.startswith("http"):
+        webbrowser.open(val)
+    else:
+        subprocess.Popen(val, shell=True)
+
+def open_folder(name):
+    path = COMMON_FOLDERS[name]
+
+    if not os.path.exists(path):
+        speak(f"The {name} folder does not exist")
+        return
+
+    speak(f"Opening {name}")
+    os.startfile(path)
+
+def system_shutdown():
+    speak("Shutting down the system in ten seconds")
+    os.system("shutdown /s /t 10")
+
+def enid_shutdown():
+    speak("Going offline. Goodbye.")
+    shutdown_tts()
+    sys.exit(0)
+
+def web_search(query):
+    speak("Searching the web")
+    webbrowser.open(
+        f"https://search.brave.com/search?q={query.replace(' ', '+')}"
+    )
+
+def play_song(song):
+    speak(f"Playing {song}")
+    subprocess.Popen(
+        f'start spotify:search:{song.replace(" ", "%20")}',
+        shell=True
+    )
+
+# ================= COMMAND HANDLER =================
+
+def handle_command(cmd):
+
+    # --- OPEN ---
+    if cmd.startswith("open "):
+        target = cmd.replace("open ", "").strip()
+
+        if target in APPS:
+            open_app(target)
+            return True
+
+        if target in COMMON_FOLDERS:
+            open_folder(target)
+            return True
+
+        speak("I could not find that application or folder")
+        return True
+
+    # --- PLAY ---
+    if cmd.startswith("play "):
+        play_song(cmd.replace("play ", ""))
+        return True
+
+    # --- SEARCH ---
+    if cmd.startswith("search ") or "who is" in cmd or "what is" in cmd:
+        web_search(cmd)
+        return True
+
+    # --- TIME ---
+    if "time" in cmd:
+        now = datetime.datetime.now()
+        speak(f"The time is {now.hour} {now.minute}")
+        return True
+
+    # --- SYSTEM SHUTDOWN ---
+    if "shutdown system" in cmd or "shutdown laptop" in cmd or "power off" in cmd:
+        system_shutdown()
+        return True
+
+    # --- ENID SHUTDOWN ---
+    if any(x in cmd for x in ["goodbye enid", "sleep", "bye", "go offline"]):
+        enid_shutdown()
+
+    # --- RESET CHAT ---
+    if "reset chat" in cmd:
+        chat_history.clear()
+        speak("Chat memory reset")
+        return True
+
+    return False
+
+# ================= MAIN LOOP =================
+
+def main():
+    speak("ENID online. Awaiting wake word.")
+    last_active = time.time()
+
+    while True:
+        heard = listen()
+        if not heard:
+            continue
+
+        if time.time() - last_active > SILENCE_TIMEOUT:
+            speak("No activity detected. Going offline.")
+            enid_shutdown()
+
+        if WAKE_WORD in heard:
+            speak("Yes")
+            command = listen()
+
+            if not command:
+                speak("I did not catch that")
+                continue
+
+            last_active = time.time()
+            print(f"Command received: {command}")
+
+            if not handle_command(command):
+                chat(command)
+
+if __name__ == "__main__":
+    main()
